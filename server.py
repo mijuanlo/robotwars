@@ -2,6 +2,8 @@ import sys
 import random
 import math
 import time
+import logging
+logging.basicConfig(level=logging.DEBUG)
 from PySide2.QtWidgets import (QApplication, QMainWindow, QGraphicsView,
                              QGraphicsScene, QGraphicsEllipseItem,
                              QGraphicsTextItem, QGraphicsRectItem,
@@ -42,6 +44,22 @@ class Explosion(QGraphicsEllipseItem):
         self.scale_factor = 1.0
         self.alpha = 1.0
         scene.addItem(self)
+
+        self.anim_group = QParallelAnimationGroup()
+        self.scale_anim = QPropertyAnimation(self, b"scale")
+        self.scale_anim.setDuration(1000)
+        self.scale_anim.setKeyValueAt(0, 1)
+        self.scale_anim.setKeyValueAt(1, 2)
+
+        self.opacity_anim = QPropertyAnimation(self, b"opacity")
+        self.opacity_anim.setDuration(1000)
+        self.opacity_anim.setKeyValueAt(0, 1)
+        self.opacity_anim.setKeyValueAt(1, 0)
+
+        self.anim_group.addAnimation(self.scale_anim)
+        self.anim_group.addAnimation(self.opacity_anim)
+        self.anim_group.finished.connect(self.deleteLater)
+        self.anim_group.start()
 
     def animate(self):
         # Aumentar escala y reducir opacidad
@@ -106,188 +124,6 @@ class Projectile(QGraphicsEllipseItem):
                     return
         self.setPos(new_pos)
 
-# class Robot(QGraphicsEllipseItem):
-#     def __init__(self, x, y, color, name, scene):
-#         super().__init__(-ROBOT_RADIUS, -ROBOT_RADIUS, ROBOT_RADIUS*2, ROBOT_RADIUS*2)
-#         self.name = name
-#         self.color = color
-#         self.locked = False
-#         self.health = 100
-#         self.velocity = 2
-#         self.angle = 0
-#         self.last_manual = 0
-#         self.scene_ref = scene
-#         self.setPos(x, y)
-#         self.setFlag(QGraphicsEllipseItem.ItemIsMovable, False)
-#         self.setAcceptHoverEvents(True)
-
-#         # Añadir a la escena
-#         scene.addItem(self)
-
-#         # Diseño
-#         gradient = QRadialGradient(0, 0, ROBOT_RADIUS)
-#         gradient.setColorAt(0, QColor(255, 255, 255, 150))
-#         gradient.setColorAt(1, QColor(color))
-#         self.setBrush(QBrush(gradient))
-#         self.setPen(Qt.NoPen)  # Eliminar borde negro
-
-#         # Cañón
-#         self.cannon = QGraphicsLineItem(ROBOT_RADIUS, 0,
-#                                        ROBOT_RADIUS + CANNON_LENGTH, 0, self)
-#         self.cannon.setPen(QPen(Qt.black, 3))
-
-#         # Barra de salud
-#         self.health_bar_bg = QGraphicsRectItem(
-#             -ROBOT_RADIUS, ROBOT_RADIUS + 10,
-#             ROBOT_RADIUS*2, 8, self
-#         )
-#         self.health_bar_bg.setBrush(QColor(50, 50, 50))
-
-#         self.health_bar = QGraphicsRectItem(
-#             -ROBOT_RADIUS, ROBOT_RADIUS + 10,
-#             ROBOT_RADIUS*2, 8, self
-#         )
-#         self.health_bar.setBrush(QColor('#FF5722'))
-#         self.health_bar.setPen(QPen(Qt.black, 1))
-
-#         # Nombre
-#         self.text = QGraphicsTextItem(name, self)
-#         self.text.setDefaultTextColor(Qt.black)
-#         self.text.setPos(-self.text.boundingRect().width()/2, -ROBOT_RADIUS - 25)
-
-#         # Temporizador de disparo
-#         self.shoot_timer = QTimer()
-#         self.shoot_timer.timeout.connect(self.shoot)
-#         self.shoot_timer.start(1000)
-
-#         # Actualizar visualización
-#         self.update_health()
-
-#     def update_health(self):
-#         self.health_bar.setRect(-ROBOT_RADIUS, ROBOT_RADIUS + 10,
-#                                ROBOT_RADIUS*2*(self.health/100), 8)
-#         self.update_cannon()
-
-#         # Explosión
-#         if self.health <= 0:
-#             # Crear explosión
-#             explosion = Explosion(self.x(), self.y(), self.scene())
-
-#             # Eliminar robot
-#             self.setVisible(False)
-#             self.setEnabled(False)
-#             self.shoot_timer.stop()
-
-#             if hasattr(self, 'battle_field'):
-#                 QTimer.singleShot(100, self.battle_field.check_winner)
-
-#             # Programar eliminación completa después de la explosión
-#             QTimer.singleShot(500, lambda: self.scene().removeItem(self))
-
-#     def update_cannon(self):
-#         self.cannon.setRotation(math.degrees(self.angle))
-
-#     def shoot(self):
-#         if self.health <= 0:
-#             return
-
-#         cannon_end = QPointF(
-#             (ROBOT_RADIUS + CANNON_LENGTH) * math.cos(self.angle),
-#             (ROBOT_RADIUS + CANNON_LENGTH) * math.sin(self.angle)
-#         )
-
-#         projectile = Projectile(
-#             self.pos().x() + cannon_end.x(),
-#             self.pos().y() + cannon_end.y(),
-#             self.angle,
-#             self
-#         )
-#         self.scene_ref.addItem(projectile)
-
-#     # Métodos de interacción con ratón
-#     def mousePressEvent(self, event):
-#         if self.locked:
-#             return
-
-#         pos = event.pos()
-#         distance = math.hypot(pos.x(), pos.y())
-
-#         if ROBOT_RADIUS - 5 <= distance <= ROBOT_RADIUS + 5:
-#             self.mode = 'rotate'
-#             self.setCursor(Qt.ClosedHandCursor)
-#             self.start_pos = event.scenePos()
-#             self.drag_offset = event.pos()
-#         else:
-#             self.mode = 'move'
-#             self.setCursor(Qt.ClosedHandCursor)
-#             self.start_move_pos = event.scenePos()
-#             self.original_pos = self.pos()
-
-#         event.accept()
-#         self.last_manual = time.time()
-
-#     def mouseMoveEvent(self, event):
-#         if self.locked:
-#             return
-
-#         if hasattr(self, 'mode'):
-#             if self.mode == 'rotate':
-#                 new_pos = event.scenePos() - self.drag_offset
-#                 self.angle = math.atan2(new_pos.y() - self.scenePos().y(),
-#                                         new_pos.x() - self.scenePos().x())
-#                 self.update_cannon()
-
-#             elif self.mode == 'move':
-#                 delta = event.scenePos() - self.start_move_pos
-#                 new_pos = self.original_pos + delta
-
-#                 new_x = max(ROBOT_RADIUS, min(WIDTH - ROBOT_RADIUS, new_pos.x()))
-#                 new_y = max(ROBOT_RADIUS, min(HEIGHT - ROBOT_RADIUS, new_pos.y()))
-
-#                 # Verificar colisión con otros robots
-#                 collision = False
-#                 for item in self.scene_ref.items():
-#                     if isinstance(item, Robot) and item != self:
-#                         dx = new_x - item.x()
-#                         dy = new_y - item.y()
-#                         dist = math.hypot(dx, dy)
-#                         if dist < 2*ROBOT_RADIUS:
-#                             collision = True
-#                             break
-
-#                 # Si no hay colisión con robots, verificar barreras
-#                 if not collision:
-#                     for item in self.scene_ref.items():
-#                         if isinstance(item, Barrier):
-#                             barrier_rect = item.sceneBoundingRect()
-#                             closest_x = max(barrier_rect.left(), min(new_x, barrier_rect.right()))
-#                             closest_y = max(barrier_rect.top(), min(new_y, barrier_rect.bottom()))
-#                             dx = new_x - closest_x
-#                             dy = new_y - closest_y
-#                             if dx**2 + dy**2 < ROBOT_RADIUS**2:
-#                                 collision = True
-#                                 break
-
-#                 # Actualizar posicion si no hay colisiones
-#                 if not collision:
-#                     self.setPos(new_x, new_y)
-#                     self.last_manual = time.time()
-
-#             event.accept()
-
-#     def mouseReleaseEvent(self, event):
-#         if hasattr(self, 'mode'):
-#             if self.mode == 'rotate':
-#                 del self.start_pos
-#                 del self.drag_offset
-#             elif self.mode == 'move':
-#                 del self.start_move_pos
-#                 del self.original_pos
-#             del self.mode
-#             self.setCursor(Qt.OpenHandCursor)
-#             self.update_cannon()
-#         event.accept()
-
 class Robot(QGraphicsEllipseItem):
     def __init__(self, x, y, color, name, scene, ai_script):
         super().__init__(-ROBOT_RADIUS, -ROBOT_RADIUS, ROBOT_RADIUS*2, ROBOT_RADIUS*2)
@@ -301,12 +137,45 @@ class Robot(QGraphicsEllipseItem):
         self.command_queue = Queue()
         self.process = None
         self.scene_ref = scene  # Add this line to store the scene reference
+        self.setPos(x,y)
         self.scene_ref.addItem(self)  # Use self.scene_ref instead of scene
         # Crear cañón
-        self.cannon = QGraphicsLineItem(ROBOT_RADIUS, 0,
-                                       ROBOT_RADIUS + CANNON_LENGTH, 0, self)
+        self.cannon = QGraphicsLineItem(ROBOT_RADIUS, 0, ROBOT_RADIUS + CANNON_LENGTH, 0, self)
         self.cannon.setPen(QPen(Qt.black, 3))
+        # Fondo de la barra
+        self.health_bar_bg = QGraphicsRectItem(
+            -ROBOT_RADIUS, ROBOT_RADIUS + 10,
+            ROBOT_RADIUS*2, 8, self
+        )
+        self.health_bar_bg.setBrush(QColor(50, 50, 50))
+
+        # Barra de salud activa
+        self.health_bar = QGraphicsRectItem(
+            -ROBOT_RADIUS, ROBOT_RADIUS + 10,
+            ROBOT_RADIUS*2, 8, self
+        )
+        self.health_bar.setBrush(QColor('#FF5722'))
+        self.health_bar.setPen(QPen(Qt.black, 1))
+
+        # --- Agregar nombre ---
+        self.text = QGraphicsTextItem(name, self)
+        self.text.setDefaultTextColor(Qt.black)
+        self.text.setPos(-self.text.boundingRect().width()/2, -ROBOT_RADIUS - 25)
         self.start_ai_process()
+
+    def update_health(self):
+        """Actualiza la barra de salud y el cañón"""
+        if self.health <= 30:
+            self.health_bar.setBrush(QColor('#FF0000'))
+        elif self.health <= 70:
+            self.health_bar.setBrush(QColor('#FFA500'))
+        else:
+            self.health_bar.setBrush(QColor('#00FF00'))
+        self.health_bar.setRect(
+            -ROBOT_RADIUS, ROBOT_RADIUS + 10,
+            ROBOT_RADIUS * 2 * (self.health / 100), 8
+        )
+        self.update_cannon()
 
     def shoot(self):
         """Dispara un proyectil desde el cañón"""
@@ -341,8 +210,10 @@ class Robot(QGraphicsEllipseItem):
             try:
                 output = self.process.stdout.readline().strip()
                 if output:
+                    logging.debug(f"Robot {self.name} received: {output}")
                     self.command_queue.put(json.loads(output))
-            except:
+            except Exception as e:
+                logging.error(f"Error reading commands: {str(e)}")
                 break
 
     def get_state(self):
@@ -373,20 +244,18 @@ class BattleField(QGraphicsView):
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
 
-        # Añadir robots
-        # self.robots = [
-        #     Robot(random.randint(ROBOT_RADIUS, WIDTH - ROBOT_RADIUS),
-        #           random.randint(ROBOT_RADIUS, HEIGHT - ROBOT_RADIUS),
-        #           '#FF6B6B', 'Alpha', self.scene),
-        #     Robot(random.randint(ROBOT_RADIUS, WIDTH - ROBOT_RADIUS),
-        #           random.randint(ROBOT_RADIUS, HEIGHT - ROBOT_RADIUS),
-        #           '#4ECDC4', 'Beta', self.scene)
-        # ]
-        self.robots = [
-            Robot(100, 100, '#FF6B6B', 'Alpha', self.scene, 'robot_alpha.py'),
-            Robot(700, 500, '#4ECDC4', 'Beta', self.scene, 'robot_beta.py')
-        ]
+        robot1 = Robot(
+            random.randint(ROBOT_RADIUS, WIDTH//2 - ROBOT_RADIUS),
+            random.randint(ROBOT_RADIUS, HEIGHT//2 - ROBOT_RADIUS),
+            '#FF6B6B', 'Alpha', self.scene, 'robot_alpha.py'
+        )
+        robot2 = Robot(
+            random.randint(WIDTH//2 + ROBOT_RADIUS, WIDTH - ROBOT_RADIUS),
+            random.randint(HEIGHT//2 + ROBOT_RADIUS, HEIGHT - ROBOT_RADIUS),
+            '#4ECDC4', 'Beta', self.scene, 'robot_beta.py'
+        )
 
+        self.robots = [ robot1 , robot2 ]
         # Añadir barreras
         self.barriers = [
             Barrier(200, 150, 100, 20),
@@ -404,58 +273,13 @@ class BattleField(QGraphicsView):
         for robot in self.robots:
             robot.battle_field = self
 
-    # def update_arena(self):
-    #     for robot in self.robots:
-    #         if robot.health <= 0:
-    #             continue
-
-    #         if not robot.locked and time.time() - robot.last_manual > 0.5:
-    #             new_angle = random.uniform(0, 2*math.pi)
-    #             new_pos = robot.pos() + QPointF(
-    #                 math.cos(new_angle)*robot.velocity,
-    #                 math.sin(new_angle)*robot.velocity
-    #             )
-
-    #             new_x = max(ROBOT_RADIUS, min(WIDTH - ROBOT_RADIUS, new_pos.x()))
-    #             new_y = max(ROBOT_RADIUS, min(HEIGHT - ROBOT_RADIUS, new_pos.y()))
-    #             collision = False
-
-    #             # Verificar colisión con otros robots
-    #             for other_robot in self.robots:
-    #                 if other_robot != robot and other_robot.health > 0:
-    #                     dx = new_x - other_robot.x()
-    #                     dy = new_y - other_robot.y()
-    #                     if math.hypot(dx, dy) < 2*ROBOT_RADIUS:
-    #                         collision = True
-    #                         break
-
-    #             # Verificar colisión con barreras si no hay colisión con robots
-    #             if not collision:
-    #                 for item in self.scene.items():
-    #                     if isinstance(item, Barrier):
-    #                         barrier_rect = item.sceneBoundingRect()
-    #                         closest_x = max(barrier_rect.left(), min(new_x, barrier_rect.right()))
-    #                         closest_y = max(barrier_rect.top(), min(new_y, barrier_rect.bottom()))
-    #                         dx = new_x - closest_x
-    #                         dy = new_y - closest_y
-    #                         if dx**2 + dy**2 < ROBOT_RADIUS**2:
-    #                             collision = True
-    #                             break
-
-    #             # Actualizar posición si no hay colisiones
-    #             if not collision:
-    #                 robot.setPos(new_x, new_y)
-    #                 robot.angle = math.atan2(new_y - robot.y(), new_x - robot.x())
-    #                 robot.update_cannon()
-
-    #         # Actualizar salud
-    #         if not robot.locked:
-    #             robot.health = max(0, robot.health - 0.05)
-    #         robot.update_health()
-
     def update_arena(self):
         # Enviar estado a todos los robots
         for robot in self.robots:
+            if not robot.locked:
+                robot.health = max(0, robot.health - 0.02)  # Reducción más gradual
+                robot.update_health()
+
             if robot.health > 0:
                 state = robot.get_state()
                 json.dump(state, robot.process.stdin)
@@ -472,6 +296,13 @@ class BattleField(QGraphicsView):
                     robot.shoot()
 
     def execute_move(self, robot, target):
+        if robot.health <= 0:
+            return
+
+        # Validar coordenadas
+        new_x = max(ROBOT_RADIUS, min(WIDTH - ROBOT_RADIUS, target.get('x', robot.x())))
+        new_y = max(ROBOT_RADIUS, min(HEIGHT - ROBOT_RADIUS, target.get('y', robot.y())))
+
         # Lógica de movimiento basada en el comando recibido
         new_x = max(ROBOT_RADIUS, min(WIDTH - ROBOT_RADIUS, target['x']))
         new_y = max(ROBOT_RADIUS, min(HEIGHT - ROBOT_RADIUS, target['y']))
@@ -521,68 +352,6 @@ class BattleField(QGraphicsView):
         for robot in self.robots:
             robot.setEnabled(False)
 
-# class MainWindow(QMainWindow):
-#     def __init__(self):
-#         super().__init__()
-#         self.setWindowTitle("Robot Battle Arena")
-#         self.battle_field = BattleField()
-#         self.setCentralWidget(self.battle_field)
-
-#         # Panel de control
-#         control_widget = QWidget()
-#         control_layout = QHBoxLayout()
-
-#         self.toggle_btn = QPushButton("Activar Automático")
-#         self.toggle_btn.setCheckable(True)
-#         self.toggle_btn.toggled.connect(self.toggle_automatic)
-
-#         self.status_labels = []
-#         for robot in self.battle_field.robots:
-#             label = QLabel(f"{robot.name}: (0, 0) HP: 100% Ángulo: 0°")
-#             label.setAlignment(Qt.AlignCenter)
-#             label.setStyleSheet("background: white; padding: 8px; border-radius: 8px;")
-#             self.status_labels.append(label)
-#             control_layout.addWidget(label)
-
-#         control_layout.addWidget(self.toggle_btn)
-#         control_widget.setLayout(control_layout)
-
-#         self.dock = QDockWidget("Controles", self)
-#         self.dock.setWidget(control_widget)
-#         self.dock.setFeatures(QDockWidget.NoDockWidgetFeatures)
-#         self.addDockWidget(Qt.BottomDockWidgetArea, self.dock)
-
-#         # Temporizador de UI
-#         self.ui_timer = QTimer()
-#         self.ui_timer.timeout.connect(self.update_ui)
-#         self.ui_timer.start(100)
-
-#         self.battle_field.winner_text = QGraphicsTextItem()
-
-#     def update_ui(self):
-#         for i, robot in enumerate(self.battle_field.robots):
-#             angle_deg = math.degrees(robot.angle) % 360
-#             self.status_labels[i].setText(
-#                 f"{robot.name}: ({robot.x():.0f}, {robot.y():.0f}) "
-#                 f"HP: {robot.health:.1f}% Ángulo: {angle_deg:.0f}° {'🔒' if robot.locked else ''}"
-#             )
-
-#     def toggle_automatic(self, checked):
-#         if checked:
-#             self.battle_field.timer.start(50)
-#             self.toggle_btn.setText("Desactivar Automático")
-#         else:
-#             self.battle_field.timer.stop()
-#             self.toggle_btn.setText("Activar Automático")
-
-#     def keyPressEvent(self, event):
-#         if event.key() == Qt.Key_Escape:
-#             self.close()
-#         elif event.key() == Qt.Key_1:
-#             self.battle_field.robots[0].locked = not self.battle_field.robots[0].locked
-#         elif event.key() == Qt.Key_2:
-#             self.battle_field.robots[1].locked = not self.battle_field.robots[1].locked
-
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -628,9 +397,9 @@ class MainWindow(QMainWindow):
                 pos = robot.pos()
                 angle_deg = math.degrees(robot.angle) % 360
                 status = (f"({pos.x():.0f}, {pos.y():.0f}) "
-                         f"HP: {robot.health:.1f}% "
-                         f"Ángulo: {angle_deg:.0f}°")
-
+                        f"HP: {robot.health:.1f}% "
+                        f"Ángulo: {angle_deg:.0f}°")
+            # Acceder al label correspondiente mediante el índice
             self.status_labels[i].setText(f"{robot.name}: {status}")
 
     def toggle_automatic(self, checked):
