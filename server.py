@@ -261,7 +261,9 @@ class Robot(QGraphicsEllipseItem):
             if self.collides_with(new_pos):
                 return self.pos()  # Revertir movimiento
         return super().itemChange(change, value)
-
+    def rotate_cannon(self, target_angle):
+        self.angle = target_angle
+        self.update_cannon()
 class BattleField(QGraphicsView):
     def __init__(self):
         super().__init__()
@@ -325,6 +327,8 @@ class BattleField(QGraphicsView):
                     self.execute_move(robot, command['move'])
                 if 'shoot' in command and command['shoot']:
                     robot.shoot()
+                if 'rotate' in command:  # Nuevo comando
+                    robot.rotate_cannon(command['rotate'])
 
         self.check_winner()
 

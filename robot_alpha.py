@@ -23,6 +23,16 @@ def ai_logic(state):
 
 while True:
     state = json.loads(sys.stdin.readline())
-    command = ai_logic(state)
-    print(json.dumps(command))
-    sys.stdout.flush()
+    self_pos = state['self']
+    enemies = state['enemies']
+
+    if enemies:
+        enemy = enemies[0]
+        dx = enemy['x'] - self_pos['x']
+        dy = enemy['y'] - self_pos['y']
+        angle = math.atan2(dy, dx)  # Ángulo hacia el enemigo
+
+        # Enviar comando para rotar el cañón
+        command = {'rotate': angle}
+        print(json.dumps(command))
+        sys.stdout.flush()
