@@ -21,8 +21,12 @@ WIDTH = 800
 HEIGHT = 600
 ROBOT_RADIUS = 25
 CANNON_LENGTH = 12
-PROJECTILE_SPEED = 8
+PROJECTILE_SPEED = 5  # Reducida velocidad de proyectil
 PROJECTILE_RADIUS = 3
+MOVE_SPEED = 40  # Velocidad de movimiento reducida
+SHOOT_COOLDOWN = 500  # Milisegundos entre disparos
+FUEL_CAPACITY = 100
+ENERGY_CAPACITY = 100
 
 class Explosion(QGraphicsEllipseItem):
     def __init__(self, x, y, scene):
@@ -107,7 +111,8 @@ class Projectile(QGraphicsEllipseItem):
         for item in self.scene().items():
             if isinstance(item, Robot) and item != self.shooter:
                 if math.hypot(new_pos.x() - item.x(), new_pos.y() - item.y()) < ROBOT_RADIUS:
-                    item.health = max(0, item.health - 20)
+                    # Reducir daño de 20 a 5 por impacto
+                    item.health = max(0, item.health - 5)
                     item.update_health()
                     self.scene().removeItem(self)
                     self.timer.stop()
@@ -131,6 +136,9 @@ class Robot(QGraphicsEllipseItem):
         self.color = color
         self.locked = False
         self.health = 100
+        self.fuel = FUEL_CAPACITY  # Nuevo atributo
+        self.energy = ENERGY_CAPACITY  # Nuevo atributo
+        self.last_shot_time = 0  # Para controlar cadencia
         self.velocity = 2
         self.angle = 0
         self.ai_script = ai_script
@@ -139,6 +147,31 @@ class Robot(QGraphicsEllipseItem):
         self.scene_ref = scene  # Add this line to store the scene reference
         self.setPos(x,y)
         self.scene_ref.addItem(self)  # Use self.scene_ref instead of scene
+
+        self.fuel_bar_bg = QGraphicsRectItem(
+            -ROBOT_RADIUS, ROBOT_RADIUS + 20,
+            ROBOT_RADIUS*2, 6, self
+        )
+        self.fuel_bar_bg.setBrush(QColor(30, 30, 30))
+
+        self.fuel_bar = QGraphicsRectItem(
+            -ROBOT_RADIUS, ROBOT_RADIUS + 20,
+            ROBOT_RADIUS*2, 6, self
+        )
+        self.fuel_bar.setBrush(QColor('#45B39D'))
+
+        self.energy_bar_bg = QGraphicsRectItem(
+            -ROBOT_RADIUS, ROBOT_RADIUS + 30,
+            ROBOT_RADIUS*2, 6, self
+        )
+        self.energy_bar_bg.setBrush(QColor(30, 30, 30))
+
+        self.energy_bar = QGraphicsRectItem(
+            -ROBOT_RADIUS, ROBOT_RADIUS + 30,
+            ROBOT_RADIUS*2, 6, self
+        )
+        self.energy_bar.setBrush(QColor('#85C1E9'))
+
         # Crear cañón
         self.cannon = QGraphicsLineItem(ROBOT_RADIUS, 0, ROBOT_RADIUS + CANNON_LENGTH, 0, self)
         self.cannon.setPen(QPen(Qt.black, 3))
@@ -164,6 +197,21 @@ class Robot(QGraphicsEllipseItem):
         self.text.setDefaultTextColor(Qt.black)
         self.text.setPos(-self.text.boundingRect().width()/2, -ROBOT_RADIUS - 25)
         self.start_ai_process()
+
+    def update_status_bars(self):
+        # Actualizar barra de combustible
+        self.fuel_bar.setRect(
+            -ROBOT_RADIUS, ROBOT_RADIUS + 20,
+            ROBOT_RADIUS*2 * (self.fuel / FUEL_CAPACITY), 6
+        )
+        # Actualizar barra de energía
+        self.energy_bar.setRect(
+            -ROBOT_RADIUS, ROBOT_RADIUS + 30,
+            ROBOT_RADIUS*2 * (self.energy / ENERGY_CAPACITY), 6
+        )
+        # Regenerar energía gradualmente
+        if self.energy < ENERGY_CAPACITY:
+            self.energy = min(ENERGY_CAPACITY, self.energy + 0.1)
 
     def terminate(self):
         if hasattr(self, 'process') and self.process:
@@ -198,6 +246,18 @@ class Robot(QGraphicsEllipseItem):
 
     def shoot(self):
         """Dispara un proyectil desde el cañón"""
+        if self.energy < 20 or time.time() - self.last_shot_time < 0.5:
+            return  # Requiere 20 de energía y 0.5s entre disparos
+        self.energy -= 20
+        self.last_shot_time = time.time()
+        current_time = time.time() * 1000
+        if current_time - self.last_shot_time < SHOOT_COOLDOWN:
+            return  # No disparar si no ha pasado el cooldown
+        if self.energy < 20:  # Coste de energía por disparo
+            return
+        self.energy -= 20
+        self.last_shot_time = current_time
+
         if self.health <= 0:
             return
         # Calcular posición del cañón
@@ -323,14 +383,32 @@ class BattleField(QGraphicsView):
         for robot in self.robots:
             robot.battle_field = self
 
+    def can_move(self):
+        return self.fuel > 5  # Mínimo combustible para moverse
+
+    def can_shoot(self):
+        return self.energy >= 20 and time.time()*1000 - self.last_shot_time > SHOOT_COOLDOWN
+
     def update_arena(self):
         if self.game_ended:
             return
+
+        for robot in self.robots:
+            if robot.health > 0:
+                # Decaimiento natural de vida
+                # robot.health = max(0, robot.health - 0.005)
+                # Regeneración de combustible
+                #if robot.fuel < FUEL_CAPACITY:
+                #    robot.fuel = min(FUEL_CAPACITY, robot.fuel + 0.05)
+                # Actualizar barras
+                robot.update_health()
+                robot.update_status_bars()
+
         # Enviar estado a todos los robots
         for robot in self.robots:
-            if not robot.locked:
-                robot.health = max(0, robot.health - 0.02)  # Reducción más gradual
-                robot.update_health()
+            #if not robot.locked:
+                #robot.health = max(0, robot.health - 0.02)  # Reducción más gradual
+                #robot.update_health()
 
             if robot.health > 0:
                 state = robot.get_state()
@@ -407,15 +485,35 @@ class BattleField(QGraphicsView):
         if robot.health <= 0:
             return
 
-        # Validar coordenadas (solo una vez)
-        new_x = max(ROBOT_RADIUS, min(WIDTH - ROBOT_RADIUS, target['x']))
-        new_y = max(ROBOT_RADIUS, min(HEIGHT - ROBOT_RADIUS, target['y']))
+        # Calcular distancia a mover
+        dx = target['x'] - robot.x()
+        dy = target['y'] - robot.y()
+        distance = math.hypot(dx, dy)
+
+        # Consumir combustible proporcional a la distancia
+        robot.fuel = max(0, robot.fuel - distance * 0.1)
+
+        # Limitar movimiento por velocidad
+        if distance > MOVE_SPEED:
+            angle = math.atan2(dy, dx)
+            new_x = robot.x() + MOVE_SPEED * math.cos(angle)
+            new_y = robot.y() + MOVE_SPEED * math.sin(angle)
+        else:
+            new_x = target['x']
+            new_y = target['y']
+
+        # Verificar límites ajustados por radio
+        new_x = max(ROBOT_RADIUS, min(WIDTH - ROBOT_RADIUS, new_x))
+        new_y = max(ROBOT_RADIUS, min(HEIGHT - ROBOT_RADIUS, new_y))
 
         new_pos = QPointF(new_x, new_y)
         if not robot.collides_with(new_pos):
-            robot.setPos(new_pos)
-            robot.angle = math.atan2(new_y - robot.y(), new_x - robot.x())
-            robot.update_cannon()
+            # Consumir combustible
+            if robot.fuel > 0:
+                robot.fuel = max(0, robot.fuel - distance*0.1)
+                robot.setPos(new_pos)
+                robot.angle = math.atan2(new_y - robot.y(), new_x - robot.x())
+                robot.update_cannon()
 
     def check_winner(self):
         alive = [robot for robot in self.robots if robot.health > 0]
