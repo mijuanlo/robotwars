@@ -33,15 +33,11 @@ class Explosion(QGraphicsEllipseItem):
         super().__init__(-10, -10, 20, 20)
         self.setPos(x, y)
         self.setZValue(2)
-
-        # Crear gradiente radial para efecto de explosión
         gradient = QRadialGradient(0, 0, 30)
         gradient.setColorAt(0, QColor('#FFA500'))
         gradient.setColorAt(0.5, QColor('#FF4500'))
         gradient.setColorAt(1, QColor(255, 255, 255, 0))
         self.setBrush(gradient)
-
-        # Configurar animación
         self.timer = QTimer()
         self.timer.timeout.connect(self.animate)
         self.timer.start(50)
@@ -49,30 +45,11 @@ class Explosion(QGraphicsEllipseItem):
         self.alpha = 1.0
         scene.addItem(self)
 
-        self.anim_group = QParallelAnimationGroup()
-        self.scale_anim = QPropertyAnimation(self, b"scale")
-        self.scale_anim.setDuration(1000)
-        self.scale_anim.setKeyValueAt(0, 1)
-        self.scale_anim.setKeyValueAt(1, 2)
-
-        self.opacity_anim = QPropertyAnimation(self, b"opacity")
-        self.opacity_anim.setDuration(1000)
-        self.opacity_anim.setKeyValueAt(0, 1)
-        self.opacity_anim.setKeyValueAt(1, 0)
-
-        self.anim_group.addAnimation(self.scale_anim)
-        self.anim_group.addAnimation(self.opacity_anim)
-        self.anim_group.finished.connect(self.deleteLater)
-        self.anim_group.start()
-
     def animate(self):
-        # Aumentar escala y reducir opacidad
         self.scale_factor *= 1.3
         self.alpha *= 0.8
         self.setScale(self.scale_factor)
         self.setOpacity(self.alpha)
-
-        # Eliminar explosión cuando sea invisible
         if self.alpha < 0.1:
             self.scene().removeItem(self)
             self.timer.stop()
@@ -198,6 +175,12 @@ class Robot(QGraphicsEllipseItem):
         self.text.setPos(-self.text.boundingRect().width()/2, -ROBOT_RADIUS - 25)
         self.start_ai_process()
 
+    def consume_resources(self, fuel_cost=0, energy_cost=0):
+        """Consume combustible y energía, asegurándose de no exceder los límites."""
+        self.fuel = max(0, self.fuel - fuel_cost)
+        self.energy = max(0, self.energy - energy_cost)
+        self.update_status_bars()
+
     def update_status_bars(self):
         # Actualizar barra de combustible
         self.fuel_bar.setRect(
@@ -214,16 +197,23 @@ class Robot(QGraphicsEllipseItem):
             self.energy = min(ENERGY_CAPACITY, self.energy + 0.1)
 
     def terminate(self):
-        if hasattr(self, 'process') and self.process:
-            self.process.terminate()
+        try:
+            if hasattr(self, 'process') and self.process:
+                if self.process.poll() is None:  # Verificar si el proceso está vivo
+                    self.process.terminate()
+                    self.process.wait(timeout=1)  # Esperar terminación
+        except Exception as e:
+            logging.debug(f"Error al terminar proceso de {self.name}: {str(e)}")
+        finally:
             self.process = None
-        if hasattr(self, 'command_queue'):
-            self.command_queue.queue.clear()
+            if hasattr(self, 'command_queue'):
+                self.command_queue.queue.clear()
     # Nuevo método para detectar colisiones
     def collides_with(self, new_pos):
+        # Verificar solo robots y barreras
         for item in self.scene().items():
             if isinstance(item, Robot) and item != self:
-                if (new_pos - item.pos()).manhattanLength() < 2*ROBOT_RADIUS:
+                if (new_pos - item.pos()).manhattanLength() < 2 * ROBOT_RADIUS:
                     return True
             elif isinstance(item, Barrier):
                 if self.boundingRect().translated(new_pos).intersects(item.boundingRect().translated(item.pos())):
@@ -279,6 +269,7 @@ class Robot(QGraphicsEllipseItem):
             [sys.executable, self.ai_script],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
             text=True,
             bufsize=1
         )
@@ -291,6 +282,8 @@ class Robot(QGraphicsEllipseItem):
                 if output:
                     logging.debug(f"Robot {self.name} received: {output}")
                     self.command_queue.put(json.loads(output))
+            except json.JSONDecodeError as e:
+                logging.error(f"Invalid JSON received: {str(e)}")
             except Exception as e:
                 logging.error(f"Error reading commands: {str(e)}")
                 break
@@ -392,31 +385,26 @@ class BattleField(QGraphicsView):
     def update_arena(self):
         if self.game_ended:
             return
+        self.update_robot_states()
+        self.send_state_to_robots()
+        self.execute_robot_commands()
+        self.check_winner()
 
+    def update_robot_states(self):
         for robot in self.robots:
             if robot.health > 0:
-                # Decaimiento natural de vida
-                # robot.health = max(0, robot.health - 0.005)
-                # Regeneración de combustible
-                #if robot.fuel < FUEL_CAPACITY:
-                #    robot.fuel = min(FUEL_CAPACITY, robot.fuel + 0.05)
-                # Actualizar barras
                 robot.update_health()
                 robot.update_status_bars()
 
-        # Enviar estado a todos los robots
+    def send_state_to_robots(self):
         for robot in self.robots:
-            #if not robot.locked:
-                #robot.health = max(0, robot.health - 0.02)  # Reducción más gradual
-                #robot.update_health()
-
             if robot.health > 0:
                 state = robot.get_state()
                 json.dump(state, robot.process.stdin)
                 robot.process.stdin.write('\n')
                 robot.process.stdin.flush()
 
-        # Ejecutar comandos de los robots
+    def execute_robot_commands(self):
         for robot in self.robots:
             if robot.health > 0 and not robot.command_queue.empty():
                 command = robot.command_queue.get()
@@ -424,13 +412,8 @@ class BattleField(QGraphicsView):
                     self.execute_move(robot, command['move'])
                 if 'shoot' in command and command['shoot']:
                     robot.shoot()
-                if 'rotate' in command:  # Nuevo comando
+                if 'rotate' in command:
                     robot.rotate_cannon(command['rotate'])
-                if 'scan' in command:
-                    radius = command['scan'].get('radius', 100)
-                    robot.scan_radius = radius  # Almacenar radio de escaneo
-
-        self.check_winner()
 
     def get_state(self):
         scan_radius = getattr(self, 'scan_radius', 0)
@@ -491,7 +474,7 @@ class BattleField(QGraphicsView):
         distance = math.hypot(dx, dy)
 
         # Consumir combustible proporcional a la distancia
-        robot.fuel = max(0, robot.fuel - distance * 0.1)
+        robot.fuel = max(0, robot.fuel - distance * 0.002)
 
         # Limitar movimiento por velocidad
         if distance > MOVE_SPEED:
@@ -563,6 +546,19 @@ class BattleField(QGraphicsView):
         for robot in self.robots:
             robot.setEnabled(False)
 
+        for robot in self.robots:
+            try:
+                if hasattr(robot, 'process') and robot.process:
+                    if robot.process.poll() is None:
+                        robot.process.terminate()
+                        robot.process.wait(timeout=1)
+            except Exception as e:
+                logging.debug(f"Error al terminar proceso durante victoria: {str(e)}")
+            finally:
+                robot.process = None
+                if hasattr(robot, 'command_queue'):
+                    robot.command_queue.queue.clear()
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -589,6 +585,11 @@ class MainWindow(QMainWindow):
             self.status_labels.append(label)
             control_layout.addWidget(label)
 
+        # Botón para reiniciar el juego
+        self.restart_btn = QPushButton("Reiniciar Juego")
+        self.restart_btn.clicked.connect(self.restart_game)
+        control_layout.addWidget(self.restart_btn)
+
         control_widget.setLayout(control_layout)
         self.dock = QDockWidget("Controles", self)
         self.dock.setWidget(control_widget)
@@ -598,6 +599,49 @@ class MainWindow(QMainWindow):
         self.ui_timer = QTimer()
         self.ui_timer.timeout.connect(self.update_ui)
         self.ui_timer.start(100)
+
+
+    # def restart_game(self):
+    #     """Reinicia el juego."""
+    #     self.battle_field.timer.stop()
+    #     self.battle_field.scene.clear()
+    #     self.battle_field.__init__()
+    #     self.ui_timer.start(100)
+    #     self.toggle_btn.setChecked(False)
+    #     self.toggle_btn.setText("Activar Automático")
+
+    # En el closeEvent de MainWindow
+    def closeEvent(self, event):
+        """Terminar todos los procesos al cerrar"""
+        for robot in self.battle_field.robots:
+            try:
+                if hasattr(robot, 'process') and robot.process:
+                    if robot.process.poll() is None:
+                        robot.process.terminate()
+                        robot.process.wait(timeout=1)
+            except Exception as e:
+                logging.debug(f"Error al cerrar proceso de {robot.name}: {str(e)}")
+        event.accept()
+    def restart_game(self):
+        """Reinicia el juego."""
+        # Detener el temporizador actual
+        if hasattr(self, 'battle_field') and self.battle_field.timer.isActive():
+            self.battle_field.timer.stop()
+
+        # Limpiar la escena actual
+        if hasattr(self, 'battle_field'):
+            self.battle_field.scene.clear()
+
+        # Reinicializar el campo de batalla
+        self.battle_field = BattleField()
+        self.setCentralWidget(self.battle_field)
+
+        # Reiniciar el temporizador de la interfaz
+        self.ui_timer.start(100)
+
+        # Restablecer el estado del botón de activación automática
+        self.toggle_btn.setChecked(False)
+        self.toggle_btn.setText("Activar Automático")
 
     def closeEvent(self, event):
         """Terminar todos los procesos al cerrar"""
