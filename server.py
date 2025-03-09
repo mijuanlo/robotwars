@@ -9,7 +9,7 @@ from PySide2.QtWidgets import (QApplication, QMainWindow, QGraphicsView,
                              QGraphicsTextItem, QGraphicsRectItem,
                              QGraphicsLineItem, QVBoxLayout, QWidget,
                              QPushButton, QLabel, QHBoxLayout, QDockWidget,
-                             QGraphicsColorizeEffect)
+                             QGraphicsColorizeEffect, QGraphicsItem)
 from PySide2.QtGui import QColor, QBrush, QRadialGradient, QPen
 from PySide2.QtCore import Qt, QTimer, QPointF
 import json
@@ -148,7 +148,9 @@ class Robot(QGraphicsEllipseItem):
             ROBOT_RADIUS*2, 8, self
         )
         self.health_bar_bg.setBrush(QColor(50, 50, 50))
-
+        self.setFlag(QGraphicsItem.ItemIsMovable)
+        self.setFlag(QGraphicsItem.ItemSendsGeometryChanges)
+        self.setCursor(Qt.OpenHandCursor)
         # Barra de salud activa
         self.health_bar = QGraphicsRectItem(
             -ROBOT_RADIUS, ROBOT_RADIUS + 10,
@@ -162,6 +164,17 @@ class Robot(QGraphicsEllipseItem):
         self.text.setDefaultTextColor(Qt.black)
         self.text.setPos(-self.text.boundingRect().width()/2, -ROBOT_RADIUS - 25)
         self.start_ai_process()
+
+    # Nuevo método para detectar colisiones
+    def collides_with(self, new_pos):
+        for item in self.scene().items():
+            if isinstance(item, Robot) and item != self:
+                if (new_pos - item.pos()).manhattanLength() < 2*ROBOT_RADIUS:
+                    return True
+            elif isinstance(item, Barrier):
+                if self.boundingRect().translated(new_pos).intersects(item.boundingRect().translated(item.pos())):
+                    return True
+        return False
 
     def update_health(self):
         """Actualiza la barra de salud y el cañón"""
@@ -234,6 +247,21 @@ class Robot(QGraphicsEllipseItem):
     def update_cannon(self):
         """Actualiza la rotación del cañón según el ángulo actual"""
         self.cannon.setRotation(math.degrees(self.angle))
+    def mousePressEvent(self, event):
+        self.setCursor(Qt.ClosedHandCursor)
+        super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        self.setCursor(Qt.OpenHandCursor)
+        super().mouseReleaseEvent(event)
+    def itemChange(self, change, value):
+        if change == QGraphicsItem.ItemPositionChange and self.scene():
+            new_pos = value
+            # Corregir posición si hay colisiones
+            if self.collides_with(new_pos):
+                return self.pos()  # Revertir movimiento
+        return super().itemChange(change, value)
+
 class BattleField(QGraphicsView):
     def __init__(self):
         super().__init__()
@@ -243,6 +271,7 @@ class BattleField(QGraphicsView):
         self.setSceneRect(0, 0, WIDTH, HEIGHT)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.game_ended = False
 
         robot1 = Robot(
             random.randint(ROBOT_RADIUS, WIDTH//2 - ROBOT_RADIUS),
@@ -274,6 +303,8 @@ class BattleField(QGraphicsView):
             robot.battle_field = self
 
     def update_arena(self):
+        if self.game_ended:
+            return
         # Enviar estado a todos los robots
         for robot in self.robots:
             if not robot.locked:
@@ -295,6 +326,8 @@ class BattleField(QGraphicsView):
                 if 'shoot' in command and command['shoot']:
                     robot.shoot()
 
+        self.check_winner()
+
     def execute_move(self, robot, target):
         if robot.health <= 0:
             return
@@ -306,21 +339,28 @@ class BattleField(QGraphicsView):
         # Lógica de movimiento basada en el comando recibido
         new_x = max(ROBOT_RADIUS, min(WIDTH - ROBOT_RADIUS, target['x']))
         new_y = max(ROBOT_RADIUS, min(HEIGHT - ROBOT_RADIUS, target['y']))
-        robot.setPos(new_x, new_y)
-        robot.angle = math.atan2(new_y - robot.y(), new_x - robot.x())
-        robot.update_cannon()
+
+        # Verificar colisiones antes de mover
+        new_pos = QPointF(new_x, new_y)
+        if not robot.collides_with(new_pos):
+            robot.setPos(new_pos)
+            robot.angle = math.atan2(new_y - robot.y(), new_x - robot.x())
+            robot.update_cannon()
 
     def check_winner(self):
         alive = [robot for robot in self.robots if robot.health > 0]
-        if len(alive) == 1:
+        if len(alive) == 1 and not self.game_ended:
+            self.game_ended = True
             self.show_winner(alive[0])
 
     def show_winner(self, winner):
         # Detener todos los procesos
         self.timer.stop()
         for robot in self.robots:
-            robot.shoot_timer.stop()
-        self.scene.removeItem(self.winner_text)
+            if hasattr(robot,'process'):
+                robot.process.terminate()
+        #    robot.shoot_timer.stop()
+        # self.scene.removeItem(self.winner_text)
 
         # Crear texto animado
         self.winner_text = QGraphicsTextItem(f"¡{winner.name} HA GANADO!")
