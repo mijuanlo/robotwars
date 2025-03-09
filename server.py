@@ -165,6 +165,12 @@ class Robot(QGraphicsEllipseItem):
         self.text.setPos(-self.text.boundingRect().width()/2, -ROBOT_RADIUS - 25)
         self.start_ai_process()
 
+    def terminate(self):
+        if hasattr(self, 'process') and self.process:
+            self.process.terminate()
+            self.process = None
+        if hasattr(self, 'command_queue'):
+            self.command_queue.queue.clear()
     # Nuevo método para detectar colisiones
     def collides_with(self, new_pos):
         for item in self.scene().items():
@@ -230,19 +236,32 @@ class Robot(QGraphicsEllipseItem):
                 break
 
     def get_state(self):
-        return {
+        robot_pos = self.pos()
+        state = {
             'self': {
-                'x': self.x(),
-                'y': self.y(),
+                'x': robot_pos.x(),
+                'y': robot_pos.y(),
                 'health': self.health,
                 'angle': self.angle
             },
-            'enemies': [{
-                'x': r.x(),
-                'y': r.y(),
-                'health': r.health
-            } for r in self.battle_field.robots if r != self]
+            'enemies': [],
+            'barriers': []
         }
+
+        # Agregar distancia a enemigos
+        for r in self.battle_field.robots:
+            if r != self:
+                dx = r.x() - robot_pos.x()
+                dy = r.y() - robot_pos.y()
+                dist = math.hypot(dx, dy)
+                state['enemies'].append({
+                    'x': r.x(),
+                    'y': r.y(),
+                    'health': r.health,
+                    'distance': dist  # Agregar distancia
+                })
+
+        return state
 
     def update_cannon(self):
         """Actualiza la rotación del cañón según el ángulo actual"""
@@ -329,22 +348,69 @@ class BattleField(QGraphicsView):
                     robot.shoot()
                 if 'rotate' in command:  # Nuevo comando
                     robot.rotate_cannon(command['rotate'])
+                if 'scan' in command:
+                    radius = command['scan'].get('radius', 100)
+                    robot.scan_radius = radius  # Almacenar radio de escaneo
 
         self.check_winner()
+
+    def get_state(self):
+        scan_radius = getattr(self, 'scan_radius', 0)
+        robot_pos = self.pos()
+        state = {
+            'self': {
+                'x': robot_pos.x(),
+                'y': robot_pos.y(),
+                'health': self.health,
+                'angle': self.angle
+            },
+            'enemies': [],
+            'barriers': []
+        }
+
+        # Detectar enemigos dentro del radio
+        if scan_radius > 0:
+            for r in self.battle_field.robots:
+                if r == self:
+                    continue
+                dx = r.x() - robot_pos.x()
+                dy = r.y() - robot_pos.y()
+                dist = math.hypot(dx, dy)
+                if scan_radius == 0 or dist <= scan_radius:
+                    state['enemies'].append({
+                        'x': r.x(),
+                        'y': r.y(),
+                        'health': r.health,
+                        'distance': dist
+                    })
+
+        # Detectar barreras dentro del radio
+        for barrier in self.battle_field.barriers:
+            rect = barrier.rect().translated(barrier.pos())
+            closest_x = max(rect.left(), min(robot_pos.x(), rect.right()))
+            closest_y = max(rect.top(), min(robot_pos.y(), rect.bottom()))
+            dist = math.hypot(robot_pos.x() - closest_x, robot_pos.y() - closest_y)
+            if dist <= scan_radius:
+                state['barriers'].append({
+                    'x': closest_x,
+                    'y': closest_y,
+                    'width': rect.width(),
+                    'height': rect.height(),
+                    'distance': dist
+                })
+
+        if hasattr(self, 'scan_radius'):
+            del self.scan_radius
+        return state
 
     def execute_move(self, robot, target):
         if robot.health <= 0:
             return
 
-        # Validar coordenadas
-        new_x = max(ROBOT_RADIUS, min(WIDTH - ROBOT_RADIUS, target.get('x', robot.x())))
-        new_y = max(ROBOT_RADIUS, min(HEIGHT - ROBOT_RADIUS, target.get('y', robot.y())))
-
-        # Lógica de movimiento basada en el comando recibido
+        # Validar coordenadas (solo una vez)
         new_x = max(ROBOT_RADIUS, min(WIDTH - ROBOT_RADIUS, target['x']))
         new_y = max(ROBOT_RADIUS, min(HEIGHT - ROBOT_RADIUS, target['y']))
 
-        # Verificar colisiones antes de mover
         new_pos = QPointF(new_x, new_y)
         if not robot.collides_with(new_pos):
             robot.setPos(new_pos)
@@ -363,6 +429,9 @@ class BattleField(QGraphicsView):
         for robot in self.robots:
             if hasattr(robot,'process'):
                 robot.process.terminate()
+                robot.process = None
+            if hasattr(robot, 'command_queue'):
+                robot.command_queue.queue.clear()
         #    robot.shoot_timer.stop()
         # self.scene.removeItem(self.winner_text)
 
@@ -431,6 +500,13 @@ class MainWindow(QMainWindow):
         self.ui_timer = QTimer()
         self.ui_timer.timeout.connect(self.update_ui)
         self.ui_timer.start(100)
+
+    def closeEvent(self, event):
+        """Terminar todos los procesos al cerrar"""
+        for robot in self.battle_field.robots:
+            if hasattr(robot, 'process') and robot.process:
+                robot.process.terminate()
+        event.accept()
 
     def update_ui(self):
         """Actualiza la interfaz con los estados de los robots"""
